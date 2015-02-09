@@ -1,0 +1,170 @@
+#!/bin/bash
+
+ function print_usage {
+     echo "Usage: -c CORES: The number of cores required on each host."
+     echo "       -m MEMORY: The amount of memory required on each host in GB. "
+     echo "       -s SLAVE_NODES: number of slave nodes"
+     echo "       -k HBASE: "True" if HBase is installed, "False" if not."
+     echo "       -h: Print help"
+ }
+
+# initialize arguments
+CORES=""
+MEMORY=""
+SLAVE_NODES=""
+HBASE="False"
+
+
+# parse arguments
+args=`getopt c:m:s:k:h $*`
+if test $? != 0
+then
+    print_usage
+    exit 1
+fi
+set -- $args
+for i
+do
+    case "$i" in
+        -c) shift;
+            CORES=$1
+            shift;;
+        -m) shift;
+            MEMORY=$1
+            shift;;
+        -s) shift;
+            SLAVE_NODES=$1
+            shift;;
+        -k) shift;
+            HBASE=$1
+            ;;
+        -h) shift;
+            print_usage
+            exit 0
+    esac
+done
+
+NODES=`uniq $PBS_NODEFILE | awk 'END { print NR }'`
+MASTER_NODE=`awk 'NR==1{print;exit}' $PBS_NODEFILE`
+
+# clean and re-create hadoop configure directory
+rm -rf ${HADOOP_CONF_DIR}
+mkdir -p ${HADOOP_CONF_DIR}
+
+# copy the hadoop configure templets from etc/hadoop to hadoop configuration directory
+cp ${HADOOP_PBS_ECOSYSTEM_HOME}/etc/hadoop/* ${HADOOP_CONF_DIR}
+
+# set JAVA_HOME
+echo "export JAVA_HOME=${JAVA_HOME}" >> ${HADOOP_CONF_DIR}/hadoop-env.sh
+
+# fix the 32 bit compiling bugs
+echo "export HADOOP_COMMON_LIB_NATIVE_DIR=\"${HADOOP_HOME}/lib/native\"" >> ${HADOOP_CONF_DIR}/hadoop-env.sh
+echo "export HADOOP_OPTS=\"-Djava.library.path=${HADOOP_HOME}/lib\"" >> ${HADOOP_CONF_DIR}/hadoop-env.sh
+
+# write the pbs nodes info to hadoop configure files
+echo $MASTER_NODE > ${HADOOP_CONF_DIR}/masters
+tail -n +2 $PBS_NODEFILE | uniq > ${HADOOP_CONF_DIR}/slaves
+
+sed -i 's/hdfs:\/\/.*:/hdfs:\/\/'"$MASTER_NODE"':/g' $HADOOP_CONF_DIR/core-site.xml
+sed -i 's:HADOOP_TMP_DIR:'"$HADOOP_TMP_DIR"':g' $HADOOP_CONF_DIR/core-site.xml
+sed -i 's:MASTER_NODE:'"$MASTER_NODE"':g' $HADOOP_CONF_DIR/core-site.xml
+
+sed -i 's:MASTER_NODE:'"$MASTER_NODE"':g' $HADOOP_CONF_DIR/mapred-site.xml
+sed -i 's:YARN_STAGING_DIR:'"$YARN_STAGING_DIR"':g' $HADOOP_CONF_DIR/mapred-site.xml
+
+sed -i 's:MASTER_NODE:'"$MASTER_NODE"':g' $HADOOP_CONF_DIR/yarn-site.xml
+sed -i 's:YARN_LOCAL_DIR:'"$YARN_LOCAL_DIR"':g' $HADOOP_CONF_DIR/yarn-site.xml
+sed -i 's:YARN_LOG_DIR:'"$YARN_LOG_DIR"':g' $HADOOP_CONF_DIR/yarn-site.xml
+sed -i 's:YARN_APP_LOG_DIR:'"$YARN_APP_LOG_DIR"':g' $HADOOP_CONF_DIR/yarn-site.xml
+
+sed -i 's:HDFS_NAME_DIR:'"$HDFS_NAME_DIR"':g' $HADOOP_CONF_DIR/hdfs-site.xml
+sed -i 's:HDFS_DATA_DIR:'"$HDFS_DATA_DIR"':g' $HADOOP_CONF_DIR/hdfs-site.xml
+sed -i 's:MASTER_NODE:'"$MASTER_NODE"':g' $HADOOP_CONF_DIR/hdfs-site.xml
+
+# optimize hadoop parameters based on running environment
+strings=`python $HADOOP_PBS_ECOSYSTEM_HOME/bin/yarn-utils.py -c $CORES -m $MEMORY -d $SLAVE_NODES -k $HBASE | tail -10`
+for string in $strings
+do
+    str1=`echo $string | cut -d'=' -f1`
+    str2=`echo $string | cut -d'=' -f2`
+
+    if [ "$str1" == "yarn.nodemanager.resource.memory-mb" ]; then
+        sed -i 's:YARN_NODEMANAGER_RESOURCE_MEMORY_MB:'"$str2"':g' $HADOOP_CONF_DIR/yarn-site.xml
+    fi
+
+    if [ "$str1" == "yarn.scheduler.maximum-allocation-mb" ]; then
+        sed -i 's:YARN_SCHEDULER_MAXIMUM_ALLOCATION_MB:'"$str2"':g' $HADOOP_CONF_DIR/yarn-site.xml
+    fi
+
+    if [ "$str1" == "yarn.scheduler.minimum-allocation-mb" ]; then
+        sed -i 's:YARN_SCHEDULER_MINIMUM_ALLOCATION_MB:'"$str2"':g' $HADOOP_CONF_DIR/yarn-site.xml
+    fi
+
+    if [ "$str1" == "yarn.app.mapreduce.am.resource.mb" ]; then
+        sed -i 's:YARN_APP_MAPREDUCE_AM_RESOURCE_MB:'"$str2"':g' $HADOOP_CONF_DIR/yarn-site.xml
+    fi
+
+    if [ "$str1" == "yarn.app.mapreduce.am.command-opts" ]; then
+        sed -i 's:YARN_APP_MAPREDUCE_AM_COMMAND_OPTS:'"$str2"':g' $HADOOP_CONF_DIR/yarn-site.xml
+    fi
+
+    if [ "$str1" == "mapreduce.reduce.memory.mb" ]; then
+        sed -i 's:MAPREDUCE_REDUCE_MEMORY_MB:'"$str2"':g' $HADOOP_CONF_DIR/mapred-site.xml
+    fi
+
+    if [ "$str1" == "mapreduce.map.memory.mb" ]; then
+        sed -i 's:MAPREDUCE_MAP_MEMORY_MB:'"$str2"':g' $HADOOP_CONF_DIR/mapred-site.xml
+    fi
+
+    if [ "$str1" == "mapreduce.map.java.opts" ]; then
+        sed -i 's:MAPREDUCE_MAP_JAVA_OPTS:'"$str2"':g' $HADOOP_CONF_DIR/mapred-site.xml
+    fi
+
+    if [ "$str1" == "mapreduce.reduce.java.opts" ]; then
+        sed -i 's:MAPREDUCE_REDUCE_JAVA_OPTS:'"$str2"':g' $HADOOP_CONF_DIR/mapred-site.xml
+    fi
+
+    if [ "$str1" == "mapreduce.task.io.sort.mb" ]; then
+        #if [ "$str2" -ge "2000"]; then
+            sed -i 's:MAPREDUCE_TASKIO_SORT_MB:'"2000"':g' $HADOOP_CONF_DIR/mapred-site.xml
+        
+        #else
+         #   sed -i 's:MAPREDUCE_TASKIO_SORT_MB:'"$str2"':g' $HADOOP_CONF_DIR/mapred-site.xml
+        #fi
+    fi
+done
+
+# build neccessary folders
+for ((i=1; i<=$NODES; i++))
+do
+    node=`awk 'NR=='"$i"'{print;exit}' $PBS_NODEFILE`
+    echo "Configuring node: $node"
+
+    cmd="killall -9 java"
+    echo $cmd
+    ssh $node $cmd
+
+    cmd="rm -rf $YARN_LOCAL_DIR; mkdir -p $YARN_LOCAL_DIR"
+    echo $cmd
+    ssh $node $cmd 
+    
+    cmd="rm -rf $YARN_LOG_DIR; mkdir -p $YARN_LOG_DIR"
+    echo $cmd
+    ssh $node $cmd 
+    
+    cmd="rm -rf $YARN_APP_LOG_DIR; mkdir -p $YARN_APP_LOG_DIR"
+    echo $cmd
+    ssh $node $cmd 
+    
+    cmd="rm -rf $YARN_STAGING_DIR; mkdir -p $YARN_STAGING_DIR/history/done $YARN_STAGING_DIR/history/done_intermediate"
+    echo $cmd
+    ssh $node $cmd 
+    
+    cmd="rm -rf $HDFS_NAME_DIR; mkdir -p $HDFS_NAME_DIR"
+    echo $cmd
+    ssh $node $cmd 
+    
+    cmd="rm -rf $HDFS_DATA_DIR; mkdir -p $HDFS_DATA_DIR"
+    echo $cmd
+    ssh $node $cmd 
+done

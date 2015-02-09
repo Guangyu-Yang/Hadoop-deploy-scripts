@@ -1,0 +1,40 @@
+#! /bin/bash
+#PBS -N HADOOP
+#PBS -l select=41:ncpus=16:mem=62gb:interconnect=qdr,walltime=72:00:00
+#PBS -l place=scatter
+#PBS -m abe
+#PBS -j oe
+
+# print command info to the log file
+set -x
+
+#PBS -l select=5:ncpus=1:ngpus=1:gpu_model=k20:mem=62gb,walltime=70:00:00
+# copy output files from temporary directory to project directory when the job job terminates abnormally
+#trap "cd $PBS_O_WORKDIR;mkdir $PBS_JOBID;cp -R $TMPDIR/* $PBS_JOBID" TERM
+
+# set running time
+hours=55
+minutes=00
+seconds=00
+
+# set the resource info
+CORES=16
+MEMORY=62
+SLAVE_NODES=40
+HBASE=False
+
+. ${HADOOP_PBS_ECOSYSTEM_HOME}/bin/set-applications-env.sh
+. ${HADOOP_PBS_ECOSYSTEM_HOME}/bin/hadoop-set-env.sh
+
+${HADOOP_PBS_ECOSYSTEM_HOME}/bin/hadoop-pbs-configure.sh -c $CORES -m $MEMORY -s $SLAVE_NODES -k $HBASE
+
+sleep 15
+
+. ${HADOOP_PBS_ECOSYSTEM_HOME}/bin/hadoop-start.sh format
+
+time=$(($hours*3600+$minutes*60+$seconds))
+sleep $time
+
+. ${HADOOP_PBS_ECOSYSTEM_HOME}/bin/hadoop-stop.sh
+
+${HADOOP_PBS_ECOSYSTEM_HOME}/bin/hadoop-pbs-cleanup.sh
